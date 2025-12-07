@@ -161,7 +161,7 @@ static int send_frame_pcap(pcap_t* handle, const byte* frame, size_t len) {
     return 0;
 }
 
-/* ---------------- Callback (UNCHANGED LOGIC) ---------------- */
+/* ---------------- Callback ---------------- */
 static void pcap_callback(u_char* user, const struct pcap_pkthdr* hdr, const u_char* pkt) {
     struct cb_ctx* ctx = (struct cb_ctx*)user;
     uint32_t dst_ip_nbo = ctx->dst_ip_nbo;

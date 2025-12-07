@@ -187,6 +187,7 @@ static void pcap_callback(u_char* user, const struct pcap_pkthdr* hdr, const u_c
     struct in_addr saddr = { ip->saddr };
     struct in_addr daddr = { ip->daddr };
 
+    /* ---------------- ICMP  ---------------- */
     if (ip->protocol == IPPROTO_ICMP) {
         struct icmp_hdr* icmp = (struct icmp_hdr*)(copy + SIZE_ETHERNET + ip_hdr_len);
 
@@ -214,9 +215,52 @@ static void pcap_callback(u_char* user, const struct pcap_pkthdr* hdr, const u_c
         }
     }
 
+    /* ---------------- TCP REPLY ---------------- */
+    if (ip->protocol == IPPROTO_TCP && ip->daddr == dst_ip_nbo) {
+        struct tcp_hdr* tcp = (struct tcp_hdr*)(copy + SIZE_ETHERNET + ip_hdr_len);
+        printf("Captured TCP: %u -> %u\n",
+       ntohs(tcp->source), ntohs(tcp->dest));
+        uint16_t flags = ntohs(tcp->doff_res_flags);
+
+        /* If SYN → reply*/
+        if (flags & 0x002) {   // SYN flag
+
+            /* Swap MAC */
+            byte tmp[6];
+            memcpy(tmp, eth->src, 6);
+            memcpy(eth->src, eth->dst, 6);
+            memcpy(eth->dst, tmp, 6);
+
+            /* Swap IP */
+            uint32_t orig = ip->saddr;
+            ip->saddr = dst_ip_nbo;
+            ip->daddr = orig;
+
+            /* Swap TCP ports */
+            uint16_t sport = tcp->source;
+            tcp->source = tcp->dest;
+            tcp->dest = sport;
+
+            /* Build SYN-ACK */
+            tcp->ack_seq = htonl(ntohl(tcp->seq) + 1);
+            tcp->seq = htonl(rand());
+            tcp->doff_res_flags = htons((5 << 12) | 0x12); // SYN + ACK
+            tcp->window = htons(64240);
+            tcp->urg_ptr = 0;
+
+            tcp->check = 0;
+            tcp->check = tcp_checksum(ip, tcp, NULL, 0);
+
+            ip->checksum = 0;
+            ip->checksum = htons(inet_checksum_bytes(ip, ip_hdr_len));
+
+            send_frame_pcap(ctx->handle,
+                copy, SIZE_ETHERNET + ip_hdr_len + sizeof(struct tcp_hdr));
+        }
+    }
+
     free(copy);
 }
-
 /* ---------------- MAIN ---------------- */
 int main(int argc, char* argv[]) {
     if (argc < 3) {
@@ -254,7 +298,7 @@ int main(int argc, char* argv[]) {
     ctx.dst_ip_nbo = dst_ip_nbo;
     ctx.handle = handle;
 
-    printf("[+] Listening on %s for ICMP to %s\n", iface, dst_ip_str);
+    printf("[+] Listening on %s for ICMP & TCP to %s\n", iface, dst_ip_str);
     pcap_loop(handle, -1, pcap_callback, (u_char*)&ctx);
 
     pcap_close(handle);
